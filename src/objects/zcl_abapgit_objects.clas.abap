@@ -110,9 +110,6 @@ CLASS zcl_abapgit_objects DEFINITION
         !is_item             TYPE zif_abapgit_definitions=>ty_item
       RETURNING
         VALUE(rv_class_name) TYPE string .
-    CLASS-METHODS update_package_tree
-      IMPORTING
-        !iv_package TYPE devclass .
     CLASS-METHODS delete_object
       IMPORTING
         !iv_package   TYPE devclass
@@ -123,6 +120,7 @@ CLASS zcl_abapgit_objects DEFINITION
         zcx_abapgit_exception .
     CLASS-METHODS deserialize_steps
       IMPORTING
+        !iv_package     TYPE devclass
         !it_steps       TYPE zif_abapgit_objects=>ty_step_data_tt
         !ii_log         TYPE REF TO zif_abapgit_log
         !iv_transport   TYPE trkorr
@@ -133,6 +131,7 @@ CLASS zcl_abapgit_objects DEFINITION
         zcx_abapgit_exception .
     CLASS-METHODS deserialize_step
       IMPORTING
+        !iv_package   TYPE devclass
         !is_step      TYPE zif_abapgit_objects=>ty_step_data
         !ii_log       TYPE REF TO zif_abapgit_log
         !iv_transport TYPE trkorr
@@ -204,6 +203,18 @@ CLASS zcl_abapgit_objects DEFINITION
         !iv_filename    TYPE string
       RETURNING
         VALUE(rv_extra) TYPE string.
+
+    CLASS-METHODS collect_packages
+      IMPORTING
+        !it_steps          TYPE zif_abapgit_objects=>ty_step_data_tt
+        !it_results        TYPE zif_abapgit_definitions=>ty_results_tt
+      RETURNING
+        VALUE(rt_packages) TYPE zif_abapgit_sap_package=>ty_devclass_tt .
+    CLASS-METHODS update_package_trees
+      IMPORTING
+        !it_packages TYPE zif_abapgit_sap_package=>ty_devclass_tt
+      RAISING
+        zcx_abapgit_exception .
 
     CLASS-METHODS is_type_supported_exit
       IMPORTING
@@ -348,6 +359,28 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
     IF lv_error = abap_true.
       zcx_abapgit_exception=>raise( 'Error trying to overwrite object from different system' ).
     ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD collect_packages.
+
+    DATA ls_deser  TYPE zif_abapgit_objects=>ty_deserialization.
+    DATA ls_result TYPE zif_abapgit_definitions=>ty_result.
+
+    FIELD-SYMBOLS <ls_step> TYPE zif_abapgit_objects=>ty_step_data.
+
+    LOOP AT it_steps ASSIGNING <ls_step>.
+      LOOP AT <ls_step>-objects INTO ls_deser.
+        IF ls_deser-package IS NOT INITIAL.
+          COLLECT ls_deser-package INTO rt_packages.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    LOOP AT it_results INTO ls_result WHERE packmove = abap_true AND package IS NOT INITIAL.
+      COLLECT ls_result-package INTO rt_packages.
+    ENDLOOP.
 
   ENDMETHOD.
 
@@ -739,6 +772,7 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
     "run deserialize for all steps and its objects
     deserialize_steps(
       EXPORTING
+        iv_package     = ii_repo->get_package( )
         it_steps       = lt_steps
         ii_log         = ii_log
         io_i18n_params = lo_i18n_params
@@ -746,7 +780,9 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
       CHANGING
         ct_files       = rt_accessed_files ).
 
-    update_package_tree( ii_repo->get_package( ) ).
+    update_package_trees( collect_packages(
+      it_steps   = lt_steps
+      it_results = lt_results ) ).
 
     " Set the original system for all updated objects to what's defined in repo settings
     update_original_system(
@@ -879,8 +915,10 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
 *   Call postprocessing
     li_exit = zcl_abapgit_exit=>get_instance( ).
 
-    li_exit->deserialize_postprocess( is_step = is_step
-                                      ii_log  = ii_log ).
+    li_exit->deserialize_postprocess(
+      iv_package = iv_package
+      is_step    = is_step
+      ii_log     = ii_log ).
 
   ENDMETHOD.
 
@@ -893,6 +931,7 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
       IF <ls_step>-step_id <> zif_abapgit_object=>gc_step_id-lxe.
         deserialize_step(
           EXPORTING
+            iv_package   = iv_package
             is_step      = <ls_step>
             ii_log       = ii_log
             iv_transport = iv_transport
@@ -1310,6 +1349,17 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
   ENDMETHOD.
 
 
+  METHOD update_package_trees.
+
+    DATA lv_package TYPE devclass.
+
+    LOOP AT it_packages INTO lv_package.
+      zcl_abapgit_factory=>get_sap_package( lv_package )->update_tree( ).
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
   METHOD update_original_system.
 
     DATA:
@@ -1369,25 +1419,4 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD update_package_tree.
-
-    DATA: lt_packages TYPE zif_abapgit_sap_package=>ty_devclass_tt,
-          lv_package  LIKE LINE OF lt_packages,
-          lv_tree     TYPE string.
-
-
-    lt_packages = zcl_abapgit_factory=>get_sap_package( iv_package )->list_subpackages( ).
-    APPEND iv_package TO lt_packages.
-
-    LOOP AT lt_packages INTO lv_package.
-* update package tree for SE80
-      lv_tree = 'EU_' && lv_package.
-      CALL FUNCTION 'WB_TREE_ACTUALIZE'
-        EXPORTING
-          tree_name              = lv_tree
-          without_crossreference = abap_true
-          with_tcode_index       = abap_true.
-    ENDLOOP.
-
-  ENDMETHOD.
 ENDCLASS.
