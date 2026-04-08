@@ -223,6 +223,7 @@ CLASS zcl_abapgit_object_srvd IMPLEMENTATION.
 
     IF mo_object_operator IS BOUND.
       ro_object_operator = mo_object_operator.
+      RETURN.
     ENDIF.
 
     ls_object_type-objtype_tr = 'SRVD'.
@@ -408,8 +409,25 @@ CLASS zcl_abapgit_object_srvd IMPLEMENTATION.
                       version           = 'I' "swbm_version_inactive
                       package           = iv_package
                       transport_request = iv_transport.
-                CATCH cx_static_check. " cx_wb_object_already_exists doesnt exist on 740sp05
-                  lv_try_update = abap_true.
+                CATCH cx_root.
+                  IF zif_abapgit_object~exists( ) = abap_true.
+                    lv_try_update = abap_true.
+                  ELSE.
+                    CLEAR mo_object_operator.
+                    lo_wb_object_operator = get_wb_object_operator( ).
+                    TRY.
+                        CALL METHOD lo_wb_object_operator->('IF_WB_OBJECT_OPERATOR~CREATE')
+                          EXPORTING
+                            io_object_data    = lo_object_data
+                            data_selection    = 'AL'
+                            version           = 'A' "swbm_version_active
+                            package           = iv_package
+                            transport_request = iv_transport.
+                      CATCH cx_root.
+                        zcx_abapgit_exception=>raise( |SRVD CREATE failed for { ms_item-obj_name }. |
+                          && |This object type may require manual creation via ADT on SAP_BASIS 758+.| ).
+                    ENDTRY.
+                  ENDIF.
               ENDTRY.
             WHEN '2'. "if_wb_adt_plugin_resource_co=>co_sfs_res_category_compound_s.
               TRY.
@@ -426,8 +444,31 @@ CLASS zcl_abapgit_object_srvd IMPLEMENTATION.
                       data_selection    = 'D' "if_wb_object_data_selection_co=>c_data_content
                       version           = 'I' "swbm_version_inactive
                       transport_request = iv_transport.
-                CATCH cx_static_check. " cx_wb_object_already_exists doesnt exist on 740sp05
-                  lv_try_update = abap_true.
+                CATCH cx_root.
+                  IF zif_abapgit_object~exists( ) = abap_true.
+                    lv_try_update = abap_true.
+                  ELSE.
+                    CLEAR mo_object_operator.
+                    lo_wb_object_operator = get_wb_object_operator( ).
+                    TRY.
+                        CALL METHOD lo_wb_object_operator->('IF_WB_OBJECT_OPERATOR~CREATE')
+                          EXPORTING
+                            io_object_data    = lo_object_data
+                            data_selection    = 'P'
+                            version           = 'A' "swbm_version_active
+                            package           = iv_package
+                            transport_request = iv_transport.
+                        CALL METHOD lo_wb_object_operator->('IF_WB_OBJECT_OPERATOR~UPDATE')
+                          EXPORTING
+                            io_object_data    = lo_object_data
+                            data_selection    = 'D'
+                            version           = 'A' "swbm_version_active
+                            transport_request = iv_transport.
+                      CATCH cx_root.
+                        zcx_abapgit_exception=>raise( |SRVD CREATE failed for { ms_item-obj_name }. |
+                          && |This object type may require manual creation via ADT on SAP_BASIS 758+.| ).
+                    ENDTRY.
+                  ENDIF.
               ENDTRY.
             WHEN OTHERS.
               zcx_abapgit_exception=>raise( |Category '{ <lv_category> }' not supported| ).
